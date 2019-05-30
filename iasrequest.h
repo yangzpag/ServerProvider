@@ -130,6 +130,8 @@ public:
 
 	Agent* new_agent();
 	Agent* agent();
+
+
 };
 
 
@@ -146,7 +148,7 @@ public:
 
 	ias_error_t sigrl(uint32_t gid, string &sigrl);
 	ias_error_t report(map<string,string> &payload, string &content,
-		vector<string> &messages);
+		vector<string> &messages,string &fulltext);
 };
 
 #endif

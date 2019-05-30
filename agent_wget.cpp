@@ -247,8 +247,9 @@ retry_wait:
 		int exitcode= WEXITSTATUS(status);
 
 		if ( exitcode == WGET_NO_ERROR || exitcode == WGET_SERVER_ERROR ) {
+			fulltext = sresponse;
 			HttpResponseParser::ParseResult result;
-
+			fprintf(stdout,"%s\n",sresponse.c_str());
 			result= parser.parse(response, sresponse.c_str(),
 				sresponse.c_str()+sresponse.length());
 			rv= ( result == HttpResponseParser::ParsingCompleted );

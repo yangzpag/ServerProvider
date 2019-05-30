@@ -61,7 +61,7 @@ CLEANFILES = Enclave_u.c Enclave_u.h Enclave.edl Enclave.signed.so
 
 server: sp
 
-bin_PROGRAMS = client sp 
+bin_PROGRAMS = sp user 
 
 ## You can't use $(wildcard ...) with automake so all source files 
 ## have to be explicitly listed.
@@ -69,22 +69,25 @@ bin_PROGRAMS = client sp
 common = byteorder.c common.cpp crypto.c hexutil.c fileio.c base64.c \
 	msgio.cpp logfile.c
 
-## client 
 
-client_SOURCES = client.cpp sgx_detect_linux.c sgx_stub.c quote_size.c \
-	$(common)
-nodist_client_SOURCES = Enclave_u.c Enclave_u.h
-EXTRA_client_DEPENDENCIES = Enclave.signed.so
-BUILT_SOURCES = Enclave_u.c Enclave_u.h
+## user
+user_SOURCES = user.cpp  iasrequest.cpp agent_wget.cpp \
+        $(common)
 
-client_LDFLAGS= $(AM_LDFLAGS) @OPENSSL_LDFLAGS@
+user_LDFLAGS= $(AM_LDFLAGS) @OPENSSL_LDFLAGS@ @CURL_LDFLAGS@ -lcrypto
 
 ## sp
 
-sp_SOURCES = sp.cpp agent_wget.cpp iasrequest.cpp $(common)
+sp_SOURCES = sp.cpp agent_wget.cpp iasrequest.cpp sgx_detect_linux.c sgx_stub.c quote_size.c $(common)
 if AGENT_CURL
 sp_SOURCES += agent_curl.cpp
+user_SOURCES += agent_curl.cpp
+
 endif
+
+nodist_sp_SOURCES = Enclave_u.c Enclave_u.h
+EXTRA_sp_DEPENDENCIES = Enclave.signed.so
+BUILT_SOURCES = Enclave_u.c Enclave_u.h
 
 sp_LDFLAGS= $(AM_LDFLAGS) @OPENSSL_LDFLAGS@ @CURL_LDFLAGS@
 
@@ -100,8 +103,8 @@ sp_LDFLAGS= $(AM_LDFLAGS) @OPENSSL_LDFLAGS@ @CURL_LDFLAGS@
 ## Use the variables, not the actual library names to ensure these
 ## targets work on simulation builds.
 
-client_LDADD=-l$(SGX_URTS_LIB) -lsgx_ukey_exchange -l$(SGX_UAE_SERVICE_LIB) \
-	-lcrypto -l:libsgx_capable.a -lpthread -ldl
-
-sp_LDADD=-lcrypto @CURL_LIBS@
+sp_LDADD=-l$(SGX_URTS_LIB) -lsgx_ukey_exchange -l$(SGX_UAE_SERVICE_LIB) \
+	-lcrypto -l:libsgx_capable.a -lpthread -ldl @CURL_LIBS@
+user_LDADD=-l$(SGX_URTS_LIB) -lsgx_ukey_exchange -l$(SGX_UAE_SERVICE_LIB) \
+        -lcrypto -l:libsgx_capable.a -lpthread -ldl @CURL_LIBS@
 

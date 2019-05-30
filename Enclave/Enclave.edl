@@ -19,25 +19,44 @@ in the License.
 #include "config.h"
 #endif
 
+
 enclave {
 	include "sgx_trts.h"
 	include "sgx_utils.h"
 	include "sgx_tkey_exchange.h"
-
+	include "sgx_tae_service.h"
 	from "sgx_tkey_exchange.edl" import *;
-
+	
 	trusted {
 #ifndef _WIN32
 		include "config.h"
 #endif
+		include "client.h"
+		public void enclave_initalize([out]sgx_ec256_public_t *cpubkey,[out]sgx_ec256_private_t *cprikey);
+		public void enclave_add_client([in]int* fd);		
+		public void enclave_get_client_status([in] int* fd,[out]ClientStatus *cstatus);
+		
+		public void enclave_set_client_status([in] int *fd,[in] ClientStatus *cstatus);
 
+		public void enclave_generate_msg2([in]int *fd,[out] client_dh_msg2_t *msg2,[out]uint8_t *res);
+		
+		public void enclave_process_msg3([in] int* fd,[in] client_dh_msg3_t *msg3,[out]uint8_t* res);
+		
+		public void enclave_cal_ava([out]int *ok,[out]int *avg);
+
+		public void enclave_process_clientdata([in] int *fd,[in] int *num,[out]uint32_t* shoudwait);
+
+		
 		public sgx_status_t get_report([out] sgx_report_t *report,
 			[in] sgx_target_info_t *target_info);
+
+		public sgx_status_t enclave_get_ps_sec_prop([out] sgx_ps_sec_prop_desc_t* security_property);
 
 		public size_t get_pse_manifest_size();
 
 		public sgx_status_t get_pse_manifest([out, count=sz] char *buf, size_t sz);
 
+/*
 		public sgx_status_t enclave_ra_init(sgx_ec256_public_t key, int b_pse,
 			[out] sgx_ra_context_t *ctx, [out] sgx_status_t *pse_status);
 
@@ -49,13 +68,14 @@ enclave {
 			sgx_ra_key_type_t type, [out] sgx_sha256_hash_t *hash);
 
 		public sgx_status_t enclave_ra_close(sgx_ra_context_t ctx);
-
+*/
 	};
 
 	untrusted {
 #ifndef _WIN32
 		include "config.h"
 #endif
+		include "Enclave/client.h"
 	};
 };
 

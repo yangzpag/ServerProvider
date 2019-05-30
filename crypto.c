@@ -30,7 +30,7 @@ in the License.
 #include <sgx_key_exchange.h>
 #include "crypto.h"
 #include "hexutil.h"
-
+#define SHIFT_BYTE	8
 static enum _error_type {
 	e_none,
 	e_crypto,
@@ -47,6 +47,278 @@ void crypto_init ()
 
 	/* Load digest and ciphers */
 	OpenSSL_add_all_algorithms();
+}
+
+
+int ecdsa_verify(const uint8_t *p_data,uint32_t data_size,const sgx_ec256_public_t *p_public,
+		sgx_ec256_signature_t *p_signature)
+{
+	unsigned char digest[SGX_SHA256_HASH_SIZE] = { 0 };
+	SHA256((const unsigned char *)p_data, data_size, (unsigned char *)digest);
+	EC_KEY *public_key = NULL;
+	BIGNUM *bn_pub_x = NULL;
+	BIGNUM *bn_pub_y = NULL;
+	BIGNUM *bn_r = NULL;
+	BIGNUM *bn_s = NULL;
+	BIGNUM *prev_bn_r = NULL;
+	BIGNUM *prev_bn_s = NULL;
+	EC_POINT *public_point = NULL;
+	EC_GROUP* ec_group = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
+	ECDSA_SIG *ecdsa_sig = NULL;
+	int valid = 0;
+	do{
+		bn_pub_x = BN_lebin2bn((unsigned char*)p_public->gx, sizeof(p_public->gx), 0);
+		if (NULL == bn_pub_x) {
+			break;
+		}
+
+		// converts the y value of public key, represented as positive integer in little-endian into a BIGNUM
+		//
+		bn_pub_y = BN_lebin2bn((unsigned char*)p_public->gy, sizeof(p_public->gy), 0);
+		if (NULL == bn_pub_y) {
+			break;
+		}
+
+		// converts the x value of the signature, represented as positive integer in little-endian into a BIGNUM
+		//
+		bn_r = BN_lebin2bn((unsigned char*)p_signature->x, sizeof(p_signature->x), 0);
+		if (NULL == bn_r) {
+			break;
+		}
+
+		// converts the y value of the signature, represented as positive integer in little-endian into a BIGNUM
+		//
+		bn_s = BN_lebin2bn((unsigned char*)p_signature->y, sizeof(p_signature->y), 0);
+		if (NULL == bn_s) {
+			break;
+		}
+		// creates new point and assigned the group object that the point relates to
+		//
+		public_point = EC_POINT_new(ec_group);
+		if (public_point == NULL) {
+			
+			break;
+		}
+
+		// sets point based on public key's x,y coordinates
+		//
+		if (1 != EC_POINT_set_affine_coordinates_GFp(ec_group, public_point, bn_pub_x, bn_pub_y, NULL)) {
+			break;
+		}
+
+		// check point if the point is on curve
+		//
+		if (1 != EC_POINT_is_on_curve(ec_group, public_point, NULL)) {
+			break;
+		}
+
+		// create empty ecc key
+		//
+		public_key = EC_KEY_new();
+		if (NULL == public_key) {
+			
+			break;
+		}
+
+		// sets ecc key group (set curve)
+		//
+		if (1 != EC_KEY_set_group(public_key, ec_group)) {
+			break;
+		}
+
+		// uses the created point to set the public key value
+		//
+		if (1 != EC_KEY_set_public_key(public_key, public_point)) {
+			break;
+		}
+
+
+
+		// allocates a new ECDSA_SIG structure (note: this function also allocates the BIGNUMs) and initialize it
+		//
+		ecdsa_sig = ECDSA_SIG_new();
+		if (NULL == ecdsa_sig) {
+			
+			break;
+		}
+
+		// free internal allocated BIGBNUMs
+		ECDSA_SIG_get0(ecdsa_sig, (const BIGNUM **)&prev_bn_r, (const BIGNUM **)&prev_bn_s);
+		if (prev_bn_r)
+			BN_clear_free(prev_bn_r);
+		if (prev_bn_s)
+			BN_clear_free(prev_bn_s);
+
+		// setes the r and s values of ecdsa_sig
+		// calling this function transfers the memory management of the values to the ECDSA_SIG object,
+		// and therefore the values that have been passed in should not be freed directly after this function has been called
+		//
+		if (1 != ECDSA_SIG_set0(ecdsa_sig, bn_r, bn_s)) {
+			ECDSA_SIG_free(ecdsa_sig);
+			ecdsa_sig = NULL;
+			break;
+		}
+
+		// verifies that the signature ecdsa_sig is a valid ECDSA signature of the hash value digest of size SGX_SHA256_HASH_SIZE using the public key public_key
+		//
+		valid = ECDSA_do_verify(digest, SGX_SHA256_HASH_SIZE, ecdsa_sig, public_key);
+	
+	}while(0);
+	if (bn_pub_x)
+		BN_clear_free(bn_pub_x);
+	if (bn_pub_y)
+		BN_clear_free(bn_pub_y);
+	if (public_point)
+		EC_POINT_clear_free(public_point);
+	if (ecdsa_sig) {
+		ECDSA_SIG_free(ecdsa_sig);
+		bn_r = NULL;
+		bn_s = NULL;
+	}
+	if (public_key)
+		EC_KEY_free(public_key);
+	if (bn_r)
+		BN_clear_free(bn_r);
+	if (bn_s)
+		BN_clear_free(bn_s);
+	if(ec_group)
+		EC_GROUP_free(ec_group);
+	return valid;
+}
+static void ctr128_inc(unsigned char *counter)
+{
+        unsigned int n = 16, c = 1;
+
+        do {
+                --n;
+                c += counter[n];
+                counter[n] = (unsigned char)c;
+                c >>= SHIFT_BYTE;
+        } while (n);
+}
+
+int aes_ctr_decrypt(const uint8_t *p_key, const uint8_t *p_src,
+                                const uint32_t src_len, uint8_t *p_ctr,
+                                uint8_t *p_dst)
+{
+
+
+
+	/* SGXSSL based crypto implementation */
+	
+	int len = 0;
+	EVP_CIPHER_CTX* ptr_ctx = NULL;
+
+	// OpenSSL assumes that the counter is in the x lower bits of the IV(ivec), and that the
+	// application has full control over overflow and the rest of the IV. This
+	// implementation takes NO responsibility for checking that the counter
+	// doesn't overflow into the rest of the IV when incremented.
+	//
+	
+
+	do {
+		// Create and initialise the context
+		//
+		if (!(ptr_ctx = EVP_CIPHER_CTX_new())) {
+		
+			break;
+		}
+
+		// Initialise decrypt, key and CTR
+		//
+		if (!EVP_DecryptInit_ex(ptr_ctx, EVP_aes_128_ctr(), NULL, (unsigned char*)p_key, p_ctr)) {
+			break;
+		}
+
+		// Decrypt message, obtain the plaintext output
+		//
+		if (!EVP_DecryptUpdate(ptr_ctx, p_dst, &len, p_src, src_len)) {
+			break;
+		}
+
+		// Finalise the decryption. A positive return value indicates success,
+		// anything else is a failure - the plaintext is not trustworthy.
+		//
+		if (EVP_DecryptFinal_ex(ptr_ctx, p_dst + len, &len) <= 0) { // same notes as above - you can't write beyond src_len
+			break;
+		}
+		// Success
+		// Increment counter
+		//
+		len = src_len;
+		while (len >= 0) {
+			ctr128_inc(p_ctr);
+			len -= 16;
+		}
+		
+	} while (0);
+
+	//cleanup ctx, and return
+	//
+	if (ptr_ctx) {
+		EVP_CIPHER_CTX_free(ptr_ctx);
+	}
+	return 0;
+}
+int aes_ctr_encrypt(const uint8_t *p_key, const uint8_t *p_src,
+                                const uint32_t src_len, uint8_t *p_ctr,
+                                uint8_t *p_dst)
+{
+
+	
+	int len = 0;
+	EVP_CIPHER_CTX* ptr_ctx = NULL;
+
+	// OpenSSL assumes that the counter is in the x lower bits of the IV(ivec), and that the
+	// application has full control over overflow and the rest of the IV. This
+	// implementation takes NO responsibility for checking that the counter
+	// doesn't overflow into the rest of the IV when incremented.
+	//
+	
+
+
+	do {
+		// Create and init ctx
+		//
+		if (!(ptr_ctx = EVP_CIPHER_CTX_new())) {
+		
+			break;
+		}
+
+		// Initialise encrypt, key
+		//
+		if (1 != EVP_EncryptInit_ex(ptr_ctx, EVP_aes_128_ctr(), NULL, (unsigned char*)p_key, p_ctr)) {
+			break;
+		}
+
+		// Provide the message to be encrypted, and obtain the encrypted output.
+		//
+		if (1 != EVP_EncryptUpdate(ptr_ctx, p_dst, &len, p_src, src_len)) {
+			break;
+		}
+
+		// Finalise the encryption
+		//
+		if (1 != EVP_EncryptFinal_ex(ptr_ctx, p_dst + len, &len)) {
+			break;
+		}
+
+		// Encryption success, increment counter
+		//
+		len = src_len;
+		while (len >= 0) {
+			ctr128_inc(p_ctr);
+			len -= 16;
+		}
+		
+	} while (0);
+
+	//clean up ctx and return
+	//
+	if (ptr_ctx) {
+		EVP_CIPHER_CTX_free(ptr_ctx);
+	}
+	return 0;
 }
 
 void crypto_destroy ()

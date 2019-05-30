@@ -67,8 +67,16 @@ int sha256_verify(const unsigned char *msg, size_t mlen, unsigned char *sig,
 int ecdsa_sign(unsigned char *msg, size_t mlen, EVP_PKEY *key,
 	unsigned char r[32], unsigned char s[32], unsigned char digest[32]);
 
-/* Certs */
+int ecdsa_verify(const uint8_t *p_data,uint32_t data_size,const sgx_ec256_public_t *p_public,
+                sgx_ec256_signature_t *p_signature);
 
+/* Certs */
+int aes_ctr_encrypt(const uint8_t *p_key, const uint8_t *p_src,
+                                const uint32_t src_len, uint8_t *p_ctr,
+                                uint8_t *p_dst);
+int aes_ctr_decrypt(const uint8_t *p_key, const uint8_t *p_src,
+                                const uint32_t src_len, uint8_t *p_ctr,
+                                uint8_t *p_dst);
 int cert_load_file (X509 **cert, const char *filename);
 int cert_load_size (X509 **cert, const char *pemdata, size_t sz);
 int cert_load (X509 **cert, const char *pemdata);

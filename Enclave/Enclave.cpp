@@ -24,22 +24,11 @@ in the License.
 #include <sgx_tae_service.h>
 #include <sgx_tkey_exchange.h>
 #include <sgx_tcrypto.h>
+#include <string.h>
+#include <sgx_tcrypto.h>
 
-static const sgx_ec256_public_t def_service_public_key = {
-    {
-        0x72, 0x12, 0x8a, 0x7a, 0x17, 0x52, 0x6e, 0xbf,
-        0x85, 0xd0, 0x3a, 0x62, 0x37, 0x30, 0xae, 0xad,
-        0x3e, 0x3d, 0xaa, 0xee, 0x9c, 0x60, 0x73, 0x1d,
-        0xb0, 0x5b, 0xe8, 0x62, 0x1c, 0x4b, 0xeb, 0x38
-    },
-    {
-        0xd4, 0x81, 0x40, 0xd9, 0x50, 0xe2, 0x57, 0x7b,
-        0x26, 0xee, 0xb7, 0x41, 0xe7, 0xc6, 0x14, 0xe2,
-        0x24, 0xb7, 0xbd, 0xc9, 0x03, 0xf2, 0x9a, 0x28,
-        0xa8, 0x3c, 0xc8, 0x10, 0x11, 0x14, 0x5e, 0x06
-    }
-
-};
+sgx_ec256_public_t  g_service_public_key;
+sgx_ec256_private_t  g_service_private_key;
 
 #define PSE_RETRIES	5	/* Arbitrary. Not too long, not too short. */
 
@@ -79,11 +68,35 @@ static const sgx_ec256_public_t def_service_public_key = {
 
 sgx_status_t get_report(sgx_report_t *report, sgx_target_info_t *target_info)
 {
+	sgx_report_data_t report_data;
+	memcpy(&report_data, &g_service_public_key,sizeof(sgx_ec256_public_t));
 #ifdef SGX_HW_SIM
-	return sgx_create_report(NULL, NULL, report);
+	return sgx_create_report(NULL, &report_data, report);
 #else
-	return sgx_create_report(target_info, NULL, report);
+	return sgx_create_report(target_info, &report_data, report);
 #endif
+}
+sgx_status_t enclave_get_ps_sec_prop(sgx_ps_sec_prop_desc_t* security_property)
+{
+
+	sgx_ps_sec_prop_desc_t ps_sec_prop_desc;
+	
+	sgx_status_t status= SGX_ERROR_SERVICE_UNAVAILABLE;
+	int retries= PSE_RETRIES;
+
+	do {
+		status= sgx_create_pse_session();
+		if ( status != SGX_SUCCESS ) return status;
+	} while (status == SGX_ERROR_BUSY && retries--);
+	if ( status != SGX_SUCCESS ) return status;
+
+	status= sgx_get_ps_sec_prop(&ps_sec_prop_desc);
+	
+	if ( status != SGX_SUCCESS ) return status;
+	//*security_property = ps_sec_prop_desc;
+	memcpy(security_property,&ps_sec_prop_desc,sizeof(ps_sec_prop_desc));
+	sgx_close_pse_session();
+	return status;
 }
 
 size_t get_pse_manifest_size ()
@@ -113,81 +126,197 @@ sgx_status_t get_pse_manifest(char *buf, size_t sz)
 	return status;
 }
 
-sgx_status_t enclave_ra_init(sgx_ec256_public_t key, int b_pse,
-	sgx_ra_context_t *ctx, sgx_status_t *pse_status)
-{
-	sgx_status_t ra_status;
 
-	/*
-	 * If we want platform services, we must create a PSE session 
-	 * before calling sgx_ra_init()
-	 */
 
-	if ( b_pse ) {
-		int retries= PSE_RETRIES;
-		do {
-			*pse_status= sgx_create_pse_session();
-			if ( *pse_status != SGX_SUCCESS ) return SGX_ERROR_UNEXPECTED;
-		} while (*pse_status == SGX_ERROR_BUSY && retries--);
-		if ( *pse_status != SGX_SUCCESS ) return SGX_ERROR_UNEXPECTED;
+void enclave_add_client(int *fd){
+
+	int i;
+	for(i=0;i<MAX_CLIENTS;i++){
+		if(clients[i].status == CLOSE){
+			clients[i].sockfd = *fd;
+			clients[i].status = CONNECT;
+		}
+	
 	}
 
-	ra_status= sgx_ra_init(&key, b_pse, ctx);
+}
 
-	if ( b_pse ) {
-		int retries= PSE_RETRIES;
-		do {
-			*pse_status= sgx_create_pse_session();
-			if ( *pse_status != SGX_SUCCESS ) return SGX_ERROR_UNEXPECTED;
-		} while (*pse_status == SGX_ERROR_BUSY && retries--);
-		if ( *pse_status != SGX_SUCCESS ) return SGX_ERROR_UNEXPECTED;
+
+void enclave_initalize(sgx_ec256_public_t *cpubkey,sgx_ec256_private_t *cprikey){
+	memset(clients,0,sizeof(ClientInfo) * MAX_CLIENTS);
+	cur_success_num = 0;	
+	sgx_ecc_state_handle_t ecc_state_handle;
+	sgx_status_t status;
+	status = sgx_ecc256_open_context( &ecc_state_handle );
+	if(status != SGX_SUCCESS)
+		return;
+	status = sgx_ecc256_create_key_pair(&g_service_private_key,&g_service_public_key,ecc_state_handle);
+	if(status != SGX_SUCCESS)
+                return;
+
+	status = sgx_ecc256_close_context( ecc_state_handle );
+        if(status != SGX_SUCCESS)
+                return;
+	*cpubkey = g_service_public_key;
+	*cprikey = g_service_private_key;
+	total_num = 1;
+	cur_success_num = 0;
+}
+
+void enclave_get_client_status(int* fd,ClientStatus *cstatus){
+	int i;
+	for(i=0;i<MAX_CLIENTS;i++){
+		if(clients[i].sockfd == *fd)
+			*cstatus = clients[i].status;
 	}
-
-	return ra_status;
+	
 }
 
-sgx_status_t enclave_ra_init_def(int b_pse, sgx_ra_context_t *ctx,
-	sgx_status_t *pse_status)
-{
-	return enclave_ra_init(def_service_public_key, b_pse, ctx, pse_status);
+void enclave_set_client_status(int *fd,ClientStatus *cstatus){
+	int i;
+        for(i=0;i<MAX_CLIENTS;i++){
+                if(clients[i].sockfd == *fd)
+                        clients[i].status = *cstatus;
+        }
+       
 }
 
+void enclave_generate_msg2(int *fd,client_dh_msg2_t *msg2,uint8_t *res){
+	int i;
+	sgx_ecc_state_handle_t ecc_state_handle;
+        sgx_status_t status;
+	sgx_ec256_signature_t temp_sig;
+	uint32_t sz = sizeof(sgx_ec256_public_t);
+//	sgx_sha256_hash_t hash;
+	
+
+
+        for(i=0;i<MAX_CLIENTS;i++){
+                if(clients[i].sockfd == *fd){
+			
+			status = sgx_ecc256_open_context( &ecc_state_handle );
+        		if(status != SGX_SUCCESS)
+                		goto error_client;
+        		status = sgx_ecc256_create_key_pair(&clients[i].prikey,&clients[i].ga,ecc_state_handle);
+        		if(status != SGX_SUCCESS)
+                		goto error_client;
+
+        		status = sgx_ecc256_close_context( ecc_state_handle );
+        		if(status != SGX_SUCCESS)
+				goto error_client;
 /*
- * Return a SHA256 hash of the requested key. KEYS SHOULD NEVER BE
- * SENT OUTSIDE THE ENCLAVE IN PLAIN TEXT. This function let's us
- * get proof of possession of the key without exposing it to untrusted
- * memory.
- */
+			status = sgx_sha256_msg((uint8_t*)&clients[i].ga,sz,&hash);
+			if(status != SGX_SUCCESS)
+                                goto error_client;
+*/
 
-sgx_status_t enclave_ra_get_key_hash(sgx_status_t *get_keys_ret,
-	sgx_ra_context_t ctx, sgx_ra_key_type_t type, sgx_sha256_hash_t *hash)
-{
-	sgx_status_t sha_ret;
-	sgx_ra_key_128_t k;
 
-	// First get the requested key which is one of:
-	//  * SGX_RA_KEY_MK 
-	//  * SGX_RA_KEY_SK
-	// per sgx_ra_get_keys().
+			status = sgx_ecc256_open_context( &ecc_state_handle );
+                        if(status != SGX_SUCCESS)
+                               goto error_client;
+			uint8_t temp[64];	
+                        status = sgx_ecdsa_sign((uint8_t *)&clients[i].ga,sz,&g_service_private_key,&temp_sig,ecc_state_handle);
+                        if(status != SGX_SUCCESS)
+                                goto error_client;
+			
+		//	sgx_ecdsa_verify((uint8_t*)&hash,32,&g_service_public_key,&temp_sig,res,ecc_state_handle);
+                        status = sgx_ecc256_close_context( ecc_state_handle );
+                        if(status != SGX_SUCCESS)
+                                goto error_client;
 
-	*get_keys_ret= sgx_ra_get_keys(ctx, type, &k);
-	if ( *get_keys_ret != SGX_SUCCESS ) return *get_keys_ret;
 
-	/* Now generate a SHA hash */
+			clients[i].status = WAITINGMSG3;
 
-	sha_ret= sgx_sha256_msg((const uint8_t *) &k, sizeof(k), 
-		(sgx_sha256_hash_t *) hash); // Sigh.
+			
+			memcpy(msg2->ga.gx,clients[i].ga.gx,32);
+			memcpy(msg2->ga.gy,clients[i].ga.gy,32);
+			memcpy(msg2->sig.x,temp_sig.x,32);
 
-	/* Let's be thorough */
+			memcpy(msg2->sig.y,temp_sig.y,32);
+			uint8_t hash[64]={0};
+			memcpy(msg2->hash,&hash,32);
+			status = sgx_ecc256_open_context( &ecc_state_handle );
+			sgx_ecdsa_verify((uint8_t *)&msg2->ga,sz,&g_service_public_key,&msg2->sig,res,ecc_state_handle);
+			status = sgx_ecc256_close_context( ecc_state_handle );
 
-	memset(k, 0, sizeof(k));
+		}
+        }
 
-	return sha_ret;
+error_client:
+	
+       return; 
 }
 
-sgx_status_t enclave_ra_close(sgx_ra_context_t ctx)
+void enclave_process_msg3(int *fd,client_dh_msg3_t *msg3,uint8_t *res){
+	int i;
+        sgx_ecc_state_handle_t ecc_state_handle;
+        sgx_status_t status;
+	sgx_ec256_dh_shared_t sk;
+	sgx_cmac_128bit_key_t cmackey;
+	sgx_cmac_state_handle_t cmac_handle;
+	uint8_t cmacans[SGX_DH_MAC_SIZE];
+	*res = 0;
+	int j;
+	for(i=0;i<MAX_CLIENTS;i++){
+		if(clients[i].sockfd == *fd){
+			status = sgx_ecc256_open_context( &ecc_state_handle );
+                        if(status != SGX_SUCCESS)
+				return ;
+			status = sgx_ecc256_compute_shared_dhkey(&clients[i].prikey,&msg3->gb,&sk,ecc_state_handle);
+
+			if(status != SGX_SUCCESS)
+                                return ;
+			status = sgx_ecc256_close_context( ecc_state_handle );
+                        if(status != SGX_SUCCESS)
+                                return ;
+			memset(&cmackey,0,sizeof(sgx_cmac_128bit_key_t));
+			sgx_cmac128_init(&cmackey,&cmac_handle);
+			sgx_cmac128_update((uint8_t*)&sk,32,cmac_handle);
+			sgx_cmac128_final(cmac_handle,(sgx_cmac_128bit_tag_t*)clients[i].kdk);
+				
+			memcpy(&cmackey,clients[i].kdk,16);
+			sgx_cmac128_init(&cmackey,&cmac_handle);
+                        sgx_cmac128_update((unsigned char *)("\x01SMK\x00\x80\x00"),7,cmac_handle);
+                        sgx_cmac128_final(cmac_handle,(sgx_cmac_128bit_tag_t*)clients[i].sk);
+			
+		
+			memcpy(&cmackey,clients[i].sk,16);
+                        sgx_cmac128_init(&cmackey,&cmac_handle);
+                        sgx_cmac128_update((unsigned char *)&msg3->gb,sizeof(sgx_ec256_public_t),cmac_handle);
+                        sgx_cmac128_final(cmac_handle,(sgx_cmac_128bit_tag_t*)cmacans);
+			for(j=0;j<16;j++)
+				if(cmacans[j] != msg3->cmac[j])*res = 0;
+			
+
+		}
+	}
+	*res = 1;
+
+}
+void enclave_cal_ava(int *ok,int *avg){
+	*ok = (cur_success_num == total_num);
+	int i;
+	if(*ok)
+	{
+		int sum = 0;
+		for(i=0;i<MAX_CLIENTS;i++){
+			if(clients[i].status == SUCCESS){
+				sum += clients[i].data.num;
+			}
+		}
+		*avg = sum/total_num;
+	}
+}
+
+void enclave_process_clientdata(int *fd,int *num,uint32_t* shoudwait)
 {
-        sgx_status_t ret;
-        ret = sgx_ra_close(ctx);
-        return ret;
+	int i;
+	for(i=0;i<MAX_CLIENTS;i++){
+                if(clients[i].sockfd == *fd){
+			clients[i].data.num = *num;
+			clients[i].status = SUCCESS;
+			cur_success_num += 1;
+		}
+	}
+	*shoudwait =  cur_success_num;
 }

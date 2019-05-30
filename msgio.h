@@ -18,17 +18,21 @@ in the License.
 #ifndef __MSGIO_H
 #define __MSGIO_H
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 
-#include <sys/types.h>
+
 #include <sgx_urts.h>
 #include <stdio.h>
-#ifdef _WIN32
-#include <WS2tcpip.h>
-#endif
 #include <string>
+
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+
+#include <errno.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
+#include <unistd.h>
 using namespace std;
 
 #define STRUCT_INCLUDES_PSIZE	0
@@ -36,32 +40,12 @@ using namespace std;
 
 /* A 1MB buffer should be sufficient for demo purposes */
 #define MSGIO_BUFFER_SZ	1024*1024
+#define IP_BUFFER_SZ 128
 
-#define DEFAULT_PORT	"7777"		// A C string for getaddrinfo()
+#define DEFAULT_PORT	7777		// A C string for getaddrinfo()
+#define MAXEVENTS 100
+#define MAXCONNEC 10
 
-#ifndef _WIN32
-typedef int SOCKET;
-#endif
-
-class MsgIO {
-	string wbuffer, rbuffer;
-	char lbuffer[MSGIO_BUFFER_SZ];
-	bool use_stdio;
-	SOCKET ls, s;
-
-public:
-	MsgIO();
-	MsgIO(const char *server, const char *port);
-	~MsgIO();
-
-	int server_loop();
-	void disconnect();
-
-	int read(void **dest, size_t *sz);
-
-	void send_partial(void *buf, size_t f_size);
-	void send(void *buf, size_t f_size);
-};
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,13 +54,33 @@ extern "C" {
 extern char debug;
 extern char verbose;
 
-int read_msg(void **dest, size_t *sz);
+int setNonBlocking(int sock);
 
-void send_msg_partial(void *buf, size_t f_size);
-void send_msg(void *buf, size_t f_size);
+static void make_recvipv4addr(struct sockaddr_in *addr, int localport);
 
-void fsend_msg_partial(FILE *fp, void *buf, size_t f_size);
-void fsend_msg(FILE *fp, void *buf, size_t f_size);
+int setupRecv();
+
+int recvPacket(int epollfd, char *buf ,uint32_t sz);
+int sendPacket(int fd, char *buf,uint32_t ssz);
+
+void setEpoll(int *socklsn, int *epollfd);
+
+int getNewConnection(int epollfd, int socklsn);
+
+void getipAddr(char ipbuf[], int fd);
+
+void setEpoll(int *socklsn, int *epollfd);
+
+
+//int handleNewConnection(int socklsn, int epollfd);
+
+//int read_msg(int fd,int epollfd,void **dest, size_t *sz);
+
+//void send_msg_partial(void *buf, size_t f_size);
+//void send_msg(int fd,int epollfd,void *buf, size_t f_size);
+
+//void fsend_msg_partial(FILE *fp, void *buf, size_t f_size);
+//void fsend_msg(FILE *fp, void *buf, size_t f_size);
 
 #ifdef __cplusplus
 };

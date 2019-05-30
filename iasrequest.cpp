@@ -350,7 +350,7 @@ ias_error_t IAS_Request::sigrl(uint32_t gid, string &sigrl)
 }
 
 ias_error_t IAS_Request::report(map<string,string> &payload, string &content,
-	vector<string> &messages)
+	vector<string> &messages, string& fulltext)
 {
 	Response response;
 	map<string,string>::iterator imap;
@@ -408,7 +408,7 @@ ias_error_t IAS_Request::report(map<string,string> &payload, string &content,
 	}
 
 	if ( response.statusCode != IAS_OK ) return response.statusCode;
-
+	fulltext = agent->fulltext;
 	/*
 	 * The response body has the attestation report. The headers have
 	 * a signature of the report, and the public signing certificate.

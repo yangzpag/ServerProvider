@@ -218,7 +218,7 @@ int AgentCurl::request(string const &url, string const &postdata,
 	if ( curl_easy_perform(curl) != 0 ) {
 		return 0;
 	}
-
+	fulltext = sresponse;
 	result= parser.parse(response, sresponse.substr(header_pos).c_str(),
 		sresponse.c_str()+sresponse.length());
 
